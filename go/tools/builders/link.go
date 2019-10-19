@@ -24,8 +24,13 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+)
+
+var (
+	stampKeyRegexp = regexp.MustCompile("([{]([^}]+)[}])+")
 )
 
 func link(args []string) error {
@@ -101,32 +106,33 @@ func link(args []string) error {
 	goargs := goenv.goTool("link")
 	goargs = append(goargs, "-importcfg", importcfgName)
 
-	parseXdef := func(xdef string) (pkg, name, value string, err error) {
+	parseXdef := func(xdef string) (pkg, name, value string, keys []string, err error) {
 		eq := strings.IndexByte(xdef, '=')
 		if eq < 0 {
-			return "", "", "", fmt.Errorf("-X or -Xstamp flag does not contain '=': %s", xdef)
+			return "", "", "", nil, fmt.Errorf("-X or -Xstamp flag does not contain '=': %s", xdef)
 		}
 		dot := strings.LastIndexByte(xdef[:eq], '.')
 		if dot < 0 {
-			return "", "", "", fmt.Errorf("-X or -Xstamp flag does not contain '.': %s", xdef)
+			return "", "", "", nil, fmt.Errorf("-X or -Xstamp flag does not contain '.': %s", xdef)
 		}
 		pkg, name, value = xdef[:dot], xdef[dot+1:eq], xdef[eq+1:]
 		if pkg == *packagePath {
 			pkg = "main"
 		}
-		return pkg, name, value, nil
+		return pkg, name, value, stampKeyRegexp.FindAllString(value, -1), nil
 	}
 	for _, xdef := range xstamps {
-		pkg, name, key, err := parseXdef(xdef)
+		pkg, name, value, keys, err := parseXdef(xdef)
 		if err != nil {
 			return err
 		}
-		if value, ok := stampMap[key]; ok {
-			goargs = append(goargs, "-X", fmt.Sprintf("%s.%s=%s", pkg, name, value))
+		for _, key := range keys {
+			value = strings.ReplaceAll(value, key, stampMap[key[1:len(key)-1]])
 		}
+		goargs = append(goargs, "-X", fmt.Sprintf("%s.%s=%s", pkg, name, value))
 	}
 	for _, xdef := range xdefs {
-		pkg, name, value, err := parseXdef(xdef)
+		pkg, name, value, _, err := parseXdef(xdef)
 		if err != nil {
 			return err
 		}
